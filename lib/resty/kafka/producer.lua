@@ -27,6 +27,9 @@ local pairs = pairs
 local API_VERSION_V0 = 0
 local API_VERSION_V1 = 1
 local API_VERSION_V2 = 2
+local API_VERSION_V3 = 3
+local API_VERSION_V5 = 5
+local API_VERSION_V8 = 8
 
 local ok, new_tab = pcall(require, "table.new")
 if not ok then
@@ -64,6 +67,12 @@ local function produce_encode(self, topic_partitions)
     local req = request:new(request.ProduceRequest,
                             correlation_id(self), self.client.client_id, self.api_version)
 
+    -- Produce v3+ starts with a nullable transactional id. Null selects the
+    -- normal non-transactional produce path and is what carries message format v2.
+    if self.api_version >= API_VERSION_V3 then
+        req:string(nil)
+    end
+
     req:int16(self.required_acks)
     req:int32(self.request_timeout)
     req:int32(topic_partitions.topic_num)
@@ -95,7 +104,8 @@ local function produce_decode(resp)
 
         ret[topic] = {}
 
-        -- ignore ThrottleTime
+        -- ThrottleTimeMs is appended after the whole topic array on every
+        -- Produce response version, so leaving it unread is enough.
         for j = 1, partition_num do
             local partition = resp:int32()
 
@@ -105,18 +115,40 @@ local function produce_decode(resp)
                     offset = resp:int64(),
                 }
 
-            elseif api_version == API_VERSION_V2 then
+            elseif api_version >= API_VERSION_V2 then
                 ret[topic][partition] = {
                     errcode = resp:int16(),
                     offset = resp:int64(),
                     timestamp = resp:int64(), -- If CreateTime is used, this field is always -1
                 }
+
+                -- v5 adds the log start offset. v8 adds per-record errors.
+                -- Both sit inside each partition, so they must be consumed
+                -- before the next partition is read.
+                if api_version >= API_VERSION_V5 then
+                    resp:int64() -- log_start_offset
+                end
+
+                if api_version >= API_VERSION_V8 then
+                    local record_error_num = resp:int32()
+                    for _ = 1, record_error_num do
+                        resp:int32()   -- batch_index
+                        resp:string()  -- batch_index_error_message
+                    end
+                    resp:string()      -- error_message
+                end
             end
         end
     end
 
     return ret
 end
+
+
+-- Used by the produce path above. Tests call these to check the v2 record
+-- batch without opening a broker socket.
+_M._encode_produce = produce_encode
+_M._decode_produce = produce_decode
 
 
 local function choose_partition(self, topic, key)

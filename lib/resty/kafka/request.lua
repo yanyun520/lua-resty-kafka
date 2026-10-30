@@ -3,6 +3,7 @@ local ffi = require "ffi"
 
 
 local bit = require "bit"
+local record_proto = require "resty.kafka.protocol.record"
 
 
 local setmetatable = setmetatable
@@ -236,6 +237,18 @@ function _M.message_set(self, messages, index)
     local off = self.offset
     local msg_set_size = 0
     local index = index or #messages
+
+    -- Produce API v3 is the first version that accepts Kafka message format v2
+    -- (RecordBatch, magic byte 2). Later non-flexible versions keep that format.
+    if self.api_key == _M.ProduceRequest and self.api_version >= API_VERSION_V3 then
+        if index < 2 then
+            self:int32(0)
+            return
+        end
+
+        self:bytes(record_proto.encode_record_batch(messages, index))
+        return
+    end
 
     local message_version = MESSAGE_VERSION_0
     if self.api_key == _M.ProduceRequest and self.api_version == API_VERSION_V2 then

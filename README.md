@@ -281,10 +281,19 @@ producer config, most like in <http://kafka.apache.org/documentation.html#produc
 
 * `api_version`
 
-    Specifies the produce API version. Default `0`.
-    If you use Kafka 0.10.0.0 or higher, `api_version` can use `0`, `1` or `2`.
-    If you use Kafka 0.9.x, `api_version` should be `0` or `1`.
-    If you use Kafka 0.8.x, `api_version` should be `0`.
+    Specifies the produce API version. Default `1`.
+
+    `3` or higher sends Kafka message format v2 (RecordBatch, magic byte `2`).
+    Produce API v3 introduced that format. Kafka 0.11 and later require it when
+    the topic message format is v2, which covers Kafka 2.x, 3.x, and 4.x.
+    Versions `3` through `8` share this non-flexible RecordBatch encoding, and
+    `3` is the baseline Kafka 4.0 still accepts. The batch is uncompressed, with
+    a null transactional id.
+
+    If the broker still accepts the legacy message set, `api_version` can be `0`,
+    `1`, or `2` (Kafka 0.10 and some later brokers). `2` uses message format v1
+    and includes the record timestamp. Kafka 0.9.x should use `0` or `1`.
+    Kafka 0.8.x should use `0`.
 
 * `partitioner`
 
